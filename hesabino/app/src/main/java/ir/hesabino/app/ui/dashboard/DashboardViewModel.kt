@@ -55,21 +55,30 @@ class DashboardViewModel @Inject constructor(
 
     private val chartType = MutableStateFlow(ChartType.DONUT)
 
-    val state = combine(
+    private data class Base(
+        val prefs: UserPrefs,
+        val summary: MonthSummary,
+        val recent: List<Transaction>,
+        val allTx: List<Transaction>,
+        val cats: List<Category>,
+    )
+
+    private val base = combine(
         prefs.prefs,
         finance.observeMonthSummary(currentRange.first, currentRange.second),
         finance.observeTransactions(currentRange.first, currentRange.second),
         finance.observeRange(windowStart, windowEnd),
         finance.observeCategories(),
-        chartType,
-    ) { p, s, txs, allTx, cats, ct ->
+    ) { p, s, txs, allTx, cats -> Base(p, s, txs, allTx, cats) }
+
+    val state = combine(base, chartType) { b, ct ->
         val series = months.map { m ->
-            val inMonth = allTx.filter { it.occurredAt in m.start..m.end }
+            val inMonth = b.allTx.filter { it.occurredAt in m.start..m.end }
             val expense = inMonth.filter { it.type == TxType.EXPENSE }.sumOf { it.amountRials }
             val income = inMonth.filter { it.type == TxType.INCOME }.sumOf { it.amountRials }
             MonthPoint(m.label, expense, income, income - expense)
         }
-        DashboardState(p, s, txs.take(6), cats, series, ct)
+        DashboardState(b.prefs, b.summary, b.recent.take(6), b.cats, series, ct)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DashboardState())
 
     fun togglePrivacy() {
