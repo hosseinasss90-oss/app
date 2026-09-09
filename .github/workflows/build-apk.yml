@@ -1,6 +1,6 @@
 name: Build Hesabino APK
 
-# ساخت APK حسابینو با GitHub Actions و انتشار به صورت یک Release قابل دانلود.
+# ساخت APK حسابینو با GitHub Actions و انتشار آن به صورت یک Release قابل دانلود.
 
 on:
   push:
@@ -27,13 +27,38 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Diagnose environment
+        run: |
+          echo "::notice::JAVA_HOME=$JAVA_HOME"
+          java -version
+          echo "ANDROID_HOME=${ANDROID_HOME:-<unset>}"
+          echo "::notice::ANDROID_HOME=${ANDROID_HOME:-<unset>}"
+          if [ -n "$ANDROID_HOME" ]; then
+            echo "::notice::platforms=$(ls "$ANDROID_HOME/platforms" 2>/dev/null | tr '\n' ' ')"
+            echo "::notice::build-tools=$(ls "$ANDROID_HOME/build-tools" 2>/dev/null | tr '\n' ' ')"
+            echo "::notice::cmdline-tools=$(ls "$ANDROID_HOME/cmdline-tools" 2>/dev/null | tr '\n' ' ')"
+            echo "::notice::licenses=$(ls "$ANDROID_HOME/licenses" 2>/dev/null | tr '\n' ' ')"
+          fi
+
       - name: Make gradlew executable
         run: chmod +x gradlew
 
-      - name: Build debug APK
-        run: ./gradlew :app:assembleDebug --no-daemon
+      - name: Build debug APK (captured)
+        run: |
+          set +e
+          ./gradlew :app:assembleDebug --no-daemon --stacktrace > gradle_build.log 2>&1
+          status=$?
+          echo "::notice::gradle exit code = $status"
+          if [ $status -ne 0 ]; then
+            echo "::error::GRADLE BUILD FAILED (exit $status)"
+            tail -n 80 gradle_build.log | sed 's/^/::error::/'
+          else
+            echo "::notice::BUILD SUCCEEDED"
+          fi
+          exit $status
 
       - name: Upload debug APK as artifact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: hesabino-debug-apk
@@ -41,6 +66,7 @@ jobs:
           if-no-files-found: error
 
       - name: Publish APK as a GitHub Release
+        if: success()
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -51,10 +77,13 @@ jobs:
             --title "Hesabino test build (debug APK)" \
             --notes "APK test build of Hesabino (debug) for Android. Built by GitHub Actions from branch ${GITHUB_REF_NAME} commit ${GITHUB_SHA}" \
             || true
-          echo "release_url=$(gh release view "$TAG" --json url -q .url 2>/dev/null)" >> "$GITHUB_ENV"
+          echo "::notice::release_url=$(gh release view "$TAG" --json url -q .url 2>/dev/null)"
 
-      - name: Show release URL
+      - name: Report result
         if: always()
         run: |
-          echo "Check the 'Releases' page of the repository for the APK download link."
-          echo "release_url=$release_url"
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "::notice::APK built and published successfully."
+          else
+            echo "::notice::APK build did not complete successfully."
+          fi
