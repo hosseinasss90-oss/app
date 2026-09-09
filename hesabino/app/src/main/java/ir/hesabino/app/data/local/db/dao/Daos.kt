@@ -125,6 +125,9 @@ interface TransactionDao {
 
     @Query("SELECT * FROM transactions WHERE isDeleted = 0 ORDER BY occurredAt DESC")
     suspend fun allActive(): List<TransactionEntity>
+
+    @Query("SELECT * FROM transactions WHERE isDeleted = 0 ORDER BY occurredAt ASC")
+    fun observeAllActiveAsc(): Flow<List<TransactionEntity>>
 }
 
 @Dao

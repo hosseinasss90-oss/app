@@ -1,15 +1,23 @@
 package ir.hesabino.app.ui.lock
 
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Fingerprint
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -19,20 +27,26 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.fragment.app.FragmentActivity
 import ir.hesabino.app.data.local.datastore.UserPreferences
 import ir.hesabino.app.util.toPersianDigits
 import kotlinx.coroutines.launch
+import java.util.concurrent.Executors
 
 @Composable
 fun LockScreen(
     prefs: UserPreferences,
     setup: Boolean,
     onUnlocked: () -> Unit,
+    biometricEnabled: Boolean = false,
 ) {
     var pin by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val activity = context as? FragmentActivity
 
     fun submit(next: String) {
         pin = next
@@ -50,8 +64,35 @@ fun LockScreen(
         }
     }
 
+    fun launchBiometric() {
+        val act = activity ?: return
+        val executor = Executors.newSingleThreadExecutor()
+        val prompt = BiometricPrompt(
+            act,
+            executor,
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    onUnlocked()
+                }
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    error = errString.toString()
+                }
+                override fun onAuthenticationFailed() {
+                    error = "اثر انگشت شناسایی نشد؛ دوباره تلاش کنید"
+                }
+            },
+        )
+        val info = BiometricPrompt.PromptInfo.Builder()
+            .setTitle("ورود با اثر انگشت")
+            .setSubtitle("اثر انگشت خود را برای ورود به حسابینو لمس کنید")
+            .setNegativeButtonText("استفاده از پین")
+            .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.BIOMETRIC_WEAK)
+            .build()
+        prompt.authenticate(info)
+    }
+
     Column(
-        Modifier.fillMaxSize(),
+        Modifier.fillMaxSize().padding(24.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -63,7 +104,19 @@ fun LockScreen(
             style = MaterialTheme.typography.headlineMedium,
         )
         if (error != null) Text(error!!, color = MaterialTheme.colorScheme.error)
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(16.dp))
+
+        // ورود با اثر انگشت (فقط وقتی فعال و دستگاه سازگار باشد)
+        if (!setup && biometricEnabled && activity != null && canUseBiometric(context)) {
+            OutlinedButton(onClick = ::launchBiometric, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Outlined.Fingerprint, null)
+                Spacer(Modifier.size(8.dp))
+                Text("ورود با اثر انگشت")
+            }
+            Spacer(Modifier.height(16.dp))
+        }
+
+        Spacer(Modifier.height(8.dp))
         listOf(listOf("1", "2", "3"), listOf("4", "5", "6"), listOf("7", "8", "9"), listOf("⌫", "0", "✓")).forEach { row ->
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 row.forEach { key ->
@@ -82,5 +135,16 @@ fun LockScreen(
             }
             Spacer(Modifier.height(8.dp))
         }
+    }
+}
+
+/** بررسی وجود سخت‌افزار و اثر انگشت ثبت‌شده. */
+@Suppress("DEPRECATION")
+fun canUseBiometric(context: android.content.Context): Boolean {
+    return try {
+        val res = BiometricManager.from(context).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+        res == BiometricManager.BIOMETRIC_SUCCESS
+    } catch (_: Exception) {
+        false
     }
 }

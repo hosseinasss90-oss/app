@@ -41,6 +41,10 @@ class FinanceRepository @Inject constructor(
     fun observeRange(from: Long, to: Long): Flow<List<Transaction>> =
         transactions.observeRange(from, to).map { it.map { e -> e.toDomain() } }
 
+    /** همهٔ تراکنش‌های فعال به ترتیب زمان برای محاسبهٔ بازهٔ واقعی داده‌ها و نمودار روزانه. */
+    fun observeAllActive(): Flow<List<Transaction>> =
+        transactions.observeAllActiveAsc().map { it.map { e -> e.toDomain() } }
+
     fun observeMonthSummary(from: Long, to: Long): Flow<MonthSummary> =
         combine(
             transactions.observeRange(from, to),

@@ -46,6 +46,7 @@ import androidx.work.OutOfQuotaPolicy
 import androidx.work.WorkManager
 import ir.hesabino.app.domain.model.DisplayCurrency
 import ir.hesabino.app.sms.SmsImportWorker
+import ir.hesabino.app.ui.lock.canUseBiometric
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -213,8 +214,23 @@ fun SettingsScreen(
                 trailingContent = { Switch(checked = state.appLockEnabled, onCheckedChange = { if (it) onLock() else vm.setLock(false) }) },
             )
             ListItem(
-                headlineContent = { Text("ورود با اثرانگشت") },
-                trailingContent = { Switch(checked = state.biometricEnabled, onCheckedChange = vm::setBiometric) },
+                headlineContent = { Text("ورود با اثر انگشت") },
+                supportingContent = {
+                    Text(if (canUseBiometric(ctx)) "با اثر انگشت قفل اپ را باز کنید" else "اثر انگشتی در این دستگاه ثبت نشده")
+                },
+                trailingContent = {
+                    Switch(
+                        checked = state.biometricEnabled,
+                        enabled = state.appLockEnabled && canUseBiometric(ctx),
+                        onCheckedChange = { on ->
+                            when {
+                                on && !state.appLockEnabled -> scope.launch { snack.showSnackbar("ابتدا «قفل اپ» را فعال کنید") }
+                                on && !canUseBiometric(ctx) -> scope.launch { snack.showSnackbar("ابتدا در تنظیمات گوشی اثر انگشت ثبت کنید") }
+                                else -> vm.setBiometric(on)
+                            }
+                        },
+                    )
+                },
             )
 
             Text("درباره", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(16.dp))
