@@ -1,0 +1,63 @@
+name: Build Hesabino APK
+
+# ساخت APK حسابینو با GitHub Actions و انتشار آن به‌صورت یک Release قابل دانلود.
+on:
+  push:
+    branches:
+      - arena/01a08808-app
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: hesabino
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+      - name: Build debug APK
+        run: ./gradlew :app:assembleDebug --no-daemon
+
+      - name: Upload debug APK as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hesabino-debug-apk
+          path: hesabino/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - name: Verify APK exists
+        run: ls -la app/build/outputs/apk/debug/
+
+      - name: Publish APK as a GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          TAG="hesabino-debug-apk"
+          # حذف نسخه/تگ قبلی تا هر اجرا یک Release تازه بسازد
+          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$TAG" "$APK" \
+            --title "حسابینو — نسخه تستی (debug APK)" \
+            --notes "APK تستی اپلیکیشن حسابینو (debug) — برای نصب روی اندروید.
+ساخته‌شده توسط GitHub Actions از شاخه: ${GITHUB_REF_NAME}
+کامیت: ${GITHUB_SHA}" || true
+          echo "release_url=$(gh release view "$TAG" --json url -q .url)" >> "$GITHUB_ENV"
+
+      - name: Show release URL
+        if: always()
+        run: echo "Release ready at: $release_url"
