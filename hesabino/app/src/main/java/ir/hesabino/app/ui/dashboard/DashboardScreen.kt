@@ -46,17 +46,18 @@ import ir.hesabino.app.ui.components.BarChart
 import ir.hesabino.app.ui.components.ChartGroup
 import ir.hesabino.app.ui.components.ChartLegend
 import ir.hesabino.app.ui.components.DonutChart
+import ir.hesabino.app.ui.components.DonutPalette
 import ir.hesabino.app.ui.components.HesabinoCard
 import ir.hesabino.app.ui.components.LineChart
 import ir.hesabino.app.ui.components.MoneyText
 import ir.hesabino.app.ui.components.TxRow
-import ir.hesabino.app.ui.theme.DonutPalette
 import ir.hesabino.app.ui.theme.Expense
 import ir.hesabino.app.ui.theme.HeroEndLight
 import ir.hesabino.app.ui.theme.HeroStartLight
 import ir.hesabino.app.ui.theme.Income
 import ir.hesabino.app.util.JalaliDate
 import ir.hesabino.app.util.MoneyFormatter
+import ir.hesabino.app.util.toPersianDigits
 
 @Composable
 fun DashboardScreen(
@@ -329,4 +330,4 @@ private fun displayMoney(rials: Long, p: ir.hesabino.app.domain.model.UserPrefs,
     return MoneyFormatter.format(rials, p.displayCurrency, p.persianDigits, withUnit = false, signed = signed) + unit
 }
 
-private fun String.toPersianDigits(): String = ir.hesabino.app.util.toPersianDigits(this)
+
