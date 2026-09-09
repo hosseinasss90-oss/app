@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import ir.hesabino.app.domain.model.DisplayCurrency
@@ -38,6 +39,7 @@ class UserPreferences @Inject constructor(
         val defaultAccount = longPreferencesKey("default_account")
         val lastExpenseCat = longPreferencesKey("last_expense_cat")
         val lastIncomeCat = longPreferencesKey("last_income_cat")
+        val watchedSenders = stringSetPreferencesKey("watched_senders")
         val debug = booleanPreferencesKey("debug_log")
         val pinHash = stringPreferencesKey("pin_hash")
         val pinSalt = stringPreferencesKey("pin_salt")
@@ -56,6 +58,7 @@ class UserPreferences @Inject constructor(
             defaultAccountId = p[Keys.defaultAccount],
             lastExpenseCategoryId = p[Keys.lastExpenseCat],
             lastIncomeCategoryId = p[Keys.lastIncomeCat],
+            watchedSenders = p[Keys.watchedSenders]?.filter { it.isNotBlank() }?.sorted().orEmpty(),
             debugLogEnabled = p[Keys.debug] ?: false,
         )
     }
@@ -76,6 +79,25 @@ class UserPreferences @Inject constructor(
     }
     suspend fun setDebug(v: Boolean) = edit { it[Keys.debug] = v }
 
+    suspend fun addWatchedSender(sender: String) {
+        val s = sender.trim()
+        if (s.isBlank()) return
+        edit { prefs ->
+            val cur = prefs[Keys.watchedSenders].orEmpty()
+            prefs[Keys.watchedSenders] = cur + s
+        }
+    }
+
+    suspend fun removeWatchedSender(sender: String) {
+        edit { prefs ->
+            val cur = prefs[Keys.watchedSenders].orEmpty()
+            prefs[Keys.watchedSenders] = cur - sender
+        }
+    }
+
+    suspend fun isSenderWatched(sender: String): Boolean =
+        context.dataStore.data.first()[Keys.watchedSenders]?.contains(sender) == true
+
     suspend fun setPin(pin: String) {
         val saltBytes = ByteArray(16).also { SecureRandom().nextBytes(it) }
         val salt = saltBytes.joinToString("") { "%02x".format(it) }
@@ -88,22 +110,10 @@ class UserPreferences @Inject constructor(
     }
 
     suspend fun verifyPin(pin: String): Boolean {
-        val p = context.dataStore.data.map { it }.let { /* placeholder */ null }
-        var salt = ""
-        var hash = ""
-        context.dataStore.data.map { prefs ->
-            salt = prefs[Keys.pinSalt].orEmpty()
-            hash = prefs[Keys.pinHash].orEmpty()
-        }
-        // Direct one-shot read:
-        val snap = androidx.datastore.preferences.core.emptyPreferences()
-        var ok = false
-        context.dataStore.edit { prefs ->
-            val s = prefs[Keys.pinSalt].orEmpty()
-            val h = prefs[Keys.pinHash].orEmpty()
-            ok = h.isNotEmpty() && Fingerprint.sha256(s + pin) == h
-        }
-        return ok
+        val p = context.dataStore.data.first()
+        val salt = p[Keys.pinSalt].orEmpty()
+        val hash = p[Keys.pinHash].orEmpty()
+        return hash.isNotEmpty() && Fingerprint.sha256(salt + pin) == hash
     }
 
     private suspend fun edit(block: suspend (androidx.datastore.preferences.core.MutablePreferences) -> Unit) {

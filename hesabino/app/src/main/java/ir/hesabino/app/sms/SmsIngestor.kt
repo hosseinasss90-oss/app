@@ -23,6 +23,7 @@ data class IngestOutcome(
     val transactionId: Long?,
     val draftId: Long?,
     val unparsed: Boolean,
+    val skipped: Boolean = false,
 )
 
 @Singleton
@@ -33,6 +34,14 @@ class SmsIngestor @Inject constructor(
     private val registry: ParserRegistry,
 ) {
     suspend fun ingest(senderId: String, body: String, receivedAt: Long): IngestOutcome {
+        val user = prefs.prefs.first()
+
+        // اگر کاربر فهرست فرستنده‌های موردنظر را مشخص کرده باشد، فقط همان‌ها خوانده می‌شوند.
+        val watched = user.watchedSenders
+        if (watched.isNotEmpty() && senderId !in watched) {
+            return IngestOutcome(false, null, null, null, false, skipped = true)
+        }
+
         val parsed = registry.parse(senderId, body, receivedAt)
         val amount = parsed?.amountRials
         val last4 = parsed?.cardLast4
@@ -41,7 +50,7 @@ class SmsIngestor @Inject constructor(
         if (existing != null) {
             return IngestOutcome(duplicate = true, eventId = existing.id, transactionId = null, draftId = null, unparsed = false)
         }
-        val storeRaw = prefs.prefs.first().storeRawSms
+        val storeRaw = user.storeRawSms
         val now = System.currentTimeMillis()
         val entity = BankEventEntity(
             senderId = senderId,
@@ -72,7 +81,6 @@ class SmsIngestor @Inject constructor(
             return IngestOutcome(false, inserted, null, null, false)
         }
 
-        val user = prefs.prefs.first()
         val rules = automation.loadRules()
         val decision = RuleEngine.decide(event, rules)
 
