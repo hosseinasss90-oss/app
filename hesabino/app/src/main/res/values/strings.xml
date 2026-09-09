@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">حسابینو</string>
+    <string name="nav_home">خانه</string>
+    <string name="nav_transactions">تراکنش‌ها</string>
+    <string name="nav_automations">خودکار</string>
+    <string name="nav_settings">تنظیمات</string>
+    <string name="fab_add">ثبت تراکنش</string>
+    <string name="sms_permission_rationale">حسابینو پیامک‌های بانکی را فقط روی همین دستگاه می‌خواند تا تراکنش بسازد. متن پیامک به اینترنت ارسال نمی‌شود.</string>
+</resources>

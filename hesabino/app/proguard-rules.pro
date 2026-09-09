@@ -1,0 +1,3 @@
+-keep class ir.hesabino.app.data.local.db.entity.** { *; }
+-dontwarn javax.annotation.**
+-keepnames class androidx.navigation.fragment.NavHostFragment
