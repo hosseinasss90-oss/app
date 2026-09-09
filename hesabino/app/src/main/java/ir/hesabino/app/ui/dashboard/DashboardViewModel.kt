@@ -93,18 +93,17 @@ class DashboardViewModel @Inject constructor(
         val all = s.all
 
         // همهٔ ماه‌های شمسی بین اولین و آخرین تراکنش کاربر (به‌همراه ماه جاری برای حالت خالی)
-        val minDate = all.minOfOrNull { JalaliDate.from(it.occurredAt) }
-        val maxDate = all.maxOfOrNull { JalaliDate.from(it.occurredAt) } ?: today
+        val minAt = all.minOfOrNull { it.occurredAt }
+        val maxAt = all.maxOfOrNull { it.occurredAt }
         val monthSet = linkedSetOf<Pair<Int, Int>>()
-        var y = minDate?.year ?: today.year
-        var m = minDate?.month ?: today.month
-        val endY = maxDate.year
-        val endM = maxDate.month
-        // اگر هیچ داده‌ای نبود، فقط ماه جاری
         if (all.isEmpty()) {
             monthSet.add(today.year to today.month)
         } else {
-            while (y < endY || (y == endY && m <= endM)) {
+            val startDate = JalaliDate.from(minAt!!)
+            val endDate = JalaliDate.from(maxAt!!)
+            var y = startDate.year
+            var m = startDate.month
+            while (y < endDate.year || (y == endDate.year && m <= endDate.month)) {
                 monthSet.add(y to m)
                 m++
                 if (m > 12) {
@@ -114,8 +113,7 @@ class DashboardViewModel @Inject constructor(
             }
         }
 
-        val available = monthSet
-            .sortedWith(compareBy({ it.first }, { it.second }))
+        val available = monthSet.sortedWith(compareBy<Pair<Int, Int>> { it.first }.thenBy { it.second })
             .map { (yy, mm) ->
                 val r = JalaliDate.monthRange(yy, mm)
                 JalaliMonthRef(yy, mm, r.first, r.second)

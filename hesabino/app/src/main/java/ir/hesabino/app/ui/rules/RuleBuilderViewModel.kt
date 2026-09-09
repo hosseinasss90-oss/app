@@ -94,7 +94,7 @@ data class DryRunResult(
 class RuleBuilderViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val automation: AutomationRepository,
-    finance: FinanceRepository,
+    private val finance: FinanceRepository,
     private val prefs: UserPreferences,
 ) : ViewModel() {
 
