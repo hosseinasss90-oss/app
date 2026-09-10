@@ -8,12 +8,15 @@ import ir.hesabino.app.data.local.datastore.UserPreferences
 import ir.hesabino.app.data.repository.AutomationRepository
 import ir.hesabino.app.data.repository.FinanceRepository
 import ir.hesabino.app.domain.model.AutomationRule
+import ir.hesabino.app.domain.model.BankEvent
 import ir.hesabino.app.domain.model.BankEventType
 import ir.hesabino.app.domain.model.Category
 import ir.hesabino.app.domain.model.ConditionField
 import ir.hesabino.app.domain.model.ConditionOperator
+import ir.hesabino.app.domain.model.ParseStatus
 import ir.hesabino.app.domain.model.RuleAction
 import ir.hesabino.app.domain.model.RuleCondition
+import ir.hesabino.app.engine.parser.ParserRegistry
 import ir.hesabino.app.engine.rules.RuleEngine
 import ir.hesabino.app.util.JalaliDate
 import ir.hesabino.app.util.MoneyFormatter
@@ -41,6 +44,8 @@ data class RuleBuilderState(
     val categories: List<Category> = emptyList(),
     val accounts: List<ir.hesabino.app.domain.model.Account> = emptyList(),
     val dryRun: DryRunResult? = null,
+    val testBody: String = "",
+    val sim: SimResult? = null,
     val saved: Boolean = false,
     val displayCurrency: ir.hesabino.app.domain.model.DisplayCurrency =
         ir.hesabino.app.domain.model.DisplayCurrency.TOMAN,
@@ -90,12 +95,27 @@ data class DryRunResult(
     val sampleTotal: Int get() = eventTotal + txTotal
 }
 
+/** نتیجهٔ شبیه‌سازی یک پیامک بانکی نمونه. */
+data class SimResult(
+    val sender: String,
+    val body: String,
+    val parsed: Boolean,
+    val bankLabel: String,
+    val typeLabel: String,
+    val amountText: String,
+    val cardLast4: String?,
+    val statusLabel: String,
+    val matched: Boolean,
+    val diagnostics: List<String>,
+)
+
 @HiltViewModel
 class RuleBuilderViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val automation: AutomationRepository,
     private val finance: FinanceRepository,
     private val prefs: UserPreferences,
+    private val parser: ParserRegistry,
 ) : ViewModel() {
 
     private val form = MutableStateFlow(RuleBuilderState())
@@ -194,6 +214,93 @@ class RuleBuilderViewModel @Inject constructor(
     fun setAuto(v: Boolean) = form.update { it.copy(autoApprove = v) }
     fun setCategory(id: Long) = form.update { it.copy(categoryId = id) }
     fun setAccount(id: Long) = form.update { it.copy(accountId = id) }
+    fun setTestBody(v: String) = form.update { it.copy(testBody = v, sim = null) }
+
+    /**
+     * شبیه‌سازی پردازش یک پیامک بانکی نمونه با متن واردشدهٔ کاربر:
+     * پارسر را اجرا می‌کند تا مشخص شود مبلغ/نوع/بانک/کارت استخراج می‌شود
+     * و بعد قانون روی همان رویداد بررسی می‌شود. برای وقتی که هنوز پیامکی
+     * اسکن نشده مفید است و مستقیماً علت «پیدا نکردن تراکنش» را نشان می‌دهد.
+     */
+    fun simulate() {
+        viewModelScope.launch {
+            val f = state.value
+            val body = f.testBody.trim()
+            if (body.isBlank()) return@launch
+            val rule = f.toRule()
+            val cur = f.displayCurrency
+            val fmt = { rials: Long? -> MoneyFormatter.format(rials ?: 0L, cur, persianDigits = false, withUnit = true) }
+            val diag = mutableListOf<String>()
+
+            val parsed = parser.parse(f.sender.trim(), body, System.currentTimeMillis())
+            val event = parsed?.let { p ->
+                BankEvent(
+                    id = 0,
+                    senderId = f.sender.trim(),
+                    bankKey = p.bankKey,
+                    parsedType = p.type,
+                    amountRials = p.amountRials,
+                    currencyHint = p.unit,
+                    cardLast4 = p.cardLast4,
+                    balanceRials = p.balanceRials,
+                    description = p.description,
+                    receivedAt = System.currentTimeMillis(),
+                    fingerprint = "",
+                    bodyHash = "",
+                    rawBody = body,
+                    parseStatus = p.status,
+                )
+            }
+            val matched = event != null && RuleEngine.matches(event!!, rule)
+            if (event == null) {
+                diag.add("این متن به‌عنوان پیامک بانکی شناسایی نشد (فرستنده یا عبارت بانکی + مبلغ لازم است).")
+            } else {
+                if (event.amountRials == null) diag.add("مبلغی در پیامک استخراج نشد.")
+                if (event.parsedType.name == "UNKNOWN") diag.add("نوع تراکنش (برداشت/واریز) تشخیص داده نشد.")
+                if (event.bankKey == "generic") diag.add("بانک به‌صورت عمومی (نه اختصاصی) شناسایی شد.")
+                if (!matched) {
+                    diag.add("پیامک پردازش شد اما با شرایط این قانون هم‌خوانی نداشت.")
+                }
+            }
+
+            val typeLabel = when (parsed?.type) {
+                BankEventType.DEBIT -> "برداشت"
+                BankEventType.CREDIT -> "واریز"
+                else -> "نامشخص"
+            }
+            form.update {
+                it.copy(
+                    sim = SimResult(
+                        sender = f.sender.trim(),
+                        body = body,
+                        parsed = parsed != null && parsed.status != ParseStatus.UNPARSED,
+                        bankLabel = parsed?.bankKey?.let { bankDisplayName(it) } ?: "—",
+                        typeLabel = typeLabel,
+                        amountText = if (event?.amountRials != null) fmt(event.amountRials) else "استخراج نشد",
+                        cardLast4 = event?.cardLast4,
+                        statusLabel = parsed?.status?.name ?: "UNPARSED",
+                        matched = matched,
+                        diagnostics = diag,
+                    ),
+                )
+            }
+        }
+    }
+
+    private fun bankDisplayName(key: String): String = when (key) {
+        "mellat" -> "بانک ملت"
+        "melli" -> "بانک ملی"
+        "saderat" -> "بانک صادرات"
+        "pasargad" -> "بانک پاسارگاد"
+        "tejarat" -> "بانک تجارت"
+        "saman" -> "بانک سامان"
+        "parsian" -> "بانک پارسیان"
+        "ayandeh" -> "بانک آینده"
+        "resalat" -> "قرض‌الحسنه رسالت"
+        "keshavarzi" -> "بانک کشاورزی"
+        "generic" -> "بانک (عمومی)"
+        else -> key
+    }
 
     fun dryRun() {
         viewModelScope.launch {

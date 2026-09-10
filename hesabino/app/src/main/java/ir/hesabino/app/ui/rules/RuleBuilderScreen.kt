@@ -24,6 +24,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -32,11 +33,13 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ir.hesabino.app.engine.rules.RuleEngine
 import ir.hesabino.app.ui.theme.Warning
+import ir.hesabino.app.util.toPersianDigits
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -129,10 +132,14 @@ fun RuleBuilderScreen(
                 Switch(checked = state.autoApprove, onCheckedChange = vm::setAuto)
             }
             Text("اگر خاموش باشد، هر تطبیق به‌صورت پیش‌نویس یک‌تپی می‌آید.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            OutlinedButton(onClick = vm::dryRun, modifier = Modifier.fillMaxWidth()) { Text("آزمایش قانون") }
+            OutlinedButton(onClick = vm::dryRun, modifier = Modifier.fillMaxWidth()) { Text("آزمایش روی پیامک‌ها و تراکنش‌ها") }
             state.dryRun?.let { r ->
                 if (r.sampleTotal == 0) {
-                    Text("پیامک بانکی یا تراکنشی برای آزمایش موجود نیست.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "هیچ پیامک اسکن‌شده یا تراکنشی برای آزمایش نیست. اول از بخش «تنظیمات» دکمهٔ «فعال‌سازی و اسکن پیامک‌های قبلی» را بزنید، یا از کادر «شبیه‌سازی پیامک» پایین استفاده کنید.",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                 } else {
                     Text(
                         "نتیجه: ${r.matchedTotal.toString()} از ${r.sampleTotal.toString()} تطبیق یافت.",
@@ -140,7 +147,7 @@ fun RuleBuilderScreen(
                     )
                     Text("پیامک‌های منطبق (${r.eventMatched.size}/${r.eventTotal})", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (r.eventMatched.isEmpty()) {
-                        Text("هیچ پیامک بانکی مطابقت ندارد. شرط فرستنده/متن فقط روی پیامک بررسی می‌شود.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("هیچ پیامک بانکی مطابقت ندارد.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     } else {
                         r.eventMatched.forEach { Text("✓ $it", style = MaterialTheme.typography.bodyMedium) }
                     }
@@ -151,16 +158,55 @@ fun RuleBuilderScreen(
                     } else {
                         r.txMatched.forEach { Text("✓ $it", style = MaterialTheme.typography.bodyMedium) }
                     }
-                    if (r.eventTotal == 0) {
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            "توجه: برای فعال‌شدن خودکار پیامک‌ها باید از بخش تنظیمات، «فعال‌سازی و اسکن پیامک‌های قبلی» را اجرا کنید.",
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodySmall,
-                        )
+                }
+            }
+
+            Text("شبیه‌سازی پیامک", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(top = 8.dp))
+            Text(
+                "یک پیامک بانکی واقعی را این‌جا بچسبانید تا ببینید حسابینو چه استخراج می‌کند و آیا با این قانون مطابقت دارد یا نه.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedTextField(
+                value = state.testBody,
+                onValueChange = vm::setTestBody,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("متن پیامک نمونه") },
+                placeholder = { Text("مثلاً: خرید از فروشگاه ... به مبلغ 1,200,000 ریال") },
+            )
+            OutlinedButton(onClick = vm::simulate, enabled = state.testBody.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
+                Text("شبیه‌سازی و بررسی")
+            }
+            state.sim?.let { s ->
+                val okColor = MaterialTheme.colorScheme.primary
+                Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceContainer) {
+                    Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("نتیجه:", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                if (s.matched) "✓ این قانون با پیامک مطابقت دارد" else "✗ مطابقت ندارد",
+                                color = if (s.matched) okColor else MaterialTheme.colorScheme.error,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
+                        Text("شناسایی: ${s.bankLabel} · نوع: ${s.typeLabel}", style = MaterialTheme.typography.bodyMedium)
+                        Text("مبلغ استخراج‌شده: ${s.amountText}", style = MaterialTheme.typography.bodyMedium)
+                        s.cardLast4?.let { Text("۴ رقم آخر کارت: ${it.toPersianDigits()}", style = MaterialTheme.typography.bodyMedium) }
+                        Text("وضعیت پارسر: ${s.statusLabel}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        s.diagnostics.forEach { d ->
+                            Text("• $d", style = MaterialTheme.typography.bodySmall, color = Warning)
+                        }
+                        if (!s.parsed) {
+                            Text(
+                                "این متن بانکی تشخیص داده نشد؛ مطمئن شوید فرستنده و عبارت بانکی/مبلغ در آن هست. اگر مطمئن هستید پیامکِ بانک است، متن را برای ما بفرستید تا پارسر آن بانک اضافه شود.",
+                                color = Warning,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
                     }
                 }
             }
+
             Button(onClick = vm::save, enabled = state.name.isNotBlank() && state.title.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
                 Text("ذخیره قانون")
             }

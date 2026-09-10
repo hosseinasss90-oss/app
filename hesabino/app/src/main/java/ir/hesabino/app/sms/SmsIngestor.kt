@@ -37,8 +37,10 @@ class SmsIngestor @Inject constructor(
         val user = prefs.prefs.first()
 
         // اگر کاربر فهرست فرستنده‌های موردنظر را مشخص کرده باشد، فقط همان‌ها خوانده می‌شوند.
-        val watched = user.watchedSenders
-        if (watched.isNotEmpty() && senderId !in watched) {
+        // مقایسه بدون حساسیت به بزرگی/کوچکی حروف و بدون فاصله تا به‌دلیل تفاوت قالب شماره، پیامک حذف نشود.
+        val watched = user.watchedSenders.map { it.trim().lowercase() }
+        val normSender = senderId.trim().lowercase()
+        if (watched.isNotEmpty() && watched.none { normSender == it || normSender.contains(it) || it.contains(normSender) }) {
             return IngestOutcome(false, null, null, null, false, skipped = true)
         }
 
