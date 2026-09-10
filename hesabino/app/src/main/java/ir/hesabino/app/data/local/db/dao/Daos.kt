@@ -149,6 +149,18 @@ interface BankEventDao {
 
     @Query("SELECT * FROM bank_events ORDER BY receivedAt DESC LIMIT :limit")
     fun observeRecent(limit: Int): Flow<List<BankEventEntity>>
+
+    @Query("SELECT COUNT(*) FROM bank_events")
+    fun observeCount(): Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM bank_events")
+    suspend fun count(): Int
+
+    @Query("SELECT COUNT(*) FROM bank_events WHERE parseStatus = :status")
+    suspend fun countByParseStatus(status: String): Int
+
+    @Query("SELECT DISTINCT senderId FROM bank_events ORDER BY senderId")
+    suspend fun distinctSenders(): List<String>
 }
 
 @Dao
