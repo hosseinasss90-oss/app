@@ -141,5 +141,6 @@ data class UserPrefs(
     val defaultAccountId: Long? = null,
     val lastExpenseCategoryId: Long? = null,
     val lastIncomeCategoryId: Long? = null,
+    val watchedSenders: List<String> = emptyList(),
     val debugLogEnabled: Boolean = false,
 )

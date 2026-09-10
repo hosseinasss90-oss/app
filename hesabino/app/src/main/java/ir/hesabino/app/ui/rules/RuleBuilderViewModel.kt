@@ -8,12 +8,15 @@ import ir.hesabino.app.data.local.datastore.UserPreferences
 import ir.hesabino.app.data.repository.AutomationRepository
 import ir.hesabino.app.data.repository.FinanceRepository
 import ir.hesabino.app.domain.model.AutomationRule
+import ir.hesabino.app.domain.model.BankEvent
 import ir.hesabino.app.domain.model.BankEventType
 import ir.hesabino.app.domain.model.Category
 import ir.hesabino.app.domain.model.ConditionField
 import ir.hesabino.app.domain.model.ConditionOperator
+import ir.hesabino.app.domain.model.ParseStatus
 import ir.hesabino.app.domain.model.RuleAction
 import ir.hesabino.app.domain.model.RuleCondition
+import ir.hesabino.app.engine.parser.ParserRegistry
 import ir.hesabino.app.engine.rules.RuleEngine
 import ir.hesabino.app.util.JalaliDate
 import ir.hesabino.app.util.MoneyFormatter
@@ -39,7 +42,10 @@ data class RuleBuilderState(
     val categoryId: Long? = null,
     val accountId: Long? = null,
     val categories: List<Category> = emptyList(),
-    val dryRun: List<Pair<String, Boolean>> = emptyList(),
+    val accounts: List<ir.hesabino.app.domain.model.Account> = emptyList(),
+    val dryRun: DryRunResult? = null,
+    val testBody: String = "",
+    val sim: SimResult? = null,
     val saved: Boolean = false,
     val displayCurrency: ir.hesabino.app.domain.model.DisplayCurrency =
         ir.hesabino.app.domain.model.DisplayCurrency.TOMAN,
@@ -71,20 +77,62 @@ data class RuleBuilderState(
             action = RuleAction(title = title, categoryId = categoryId, accountId = accountId),
         )
     }
+
+    /** دسته‌هایی که با جهت این قانون (برداشت/واریز) سازگارند. */
+    fun relevantCategories(): List<Category> = categories.filter { c ->
+        if (debit) c.kind.name in setOf("EXPENSE", "ANY") else c.kind.name in setOf("INCOME", "ANY")
+    }
 }
+
+/** نتیجهٔ آزمایش (dry-run): چند پیامک/تراکنش با این قانون منطبق می‌شوند. */
+data class DryRunResult(
+    val eventMatched: List<String>,
+    val eventTotal: Int,
+    val txMatched: List<String>,
+    val txTotal: Int,
+) {
+    val matchedTotal: Int get() = eventMatched.size + txMatched.size
+    val sampleTotal: Int get() = eventTotal + txTotal
+}
+
+/** نتیجهٔ شبیه‌سازی یک پیامک بانکی نمونه. */
+data class SimResult(
+    val sender: String,
+    val body: String,
+    val parsed: Boolean,
+    val bankLabel: String,
+    val typeLabel: String,
+    val amountText: String,
+    val cardLast4: String?,
+    val statusLabel: String,
+    val matched: Boolean,
+    val diagnostics: List<String>,
+)
 
 @HiltViewModel
 class RuleBuilderViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val automation: AutomationRepository,
-    finance: FinanceRepository,
+    private val finance: FinanceRepository,
     private val prefs: UserPreferences,
+    private val parser: ParserRegistry,
 ) : ViewModel() {
 
     private val form = MutableStateFlow(RuleBuilderState())
 
-    val state = combine(form, finance.observeCategories(), prefs.prefs) { f, cats, p ->
-        f.copy(categories = cats, displayCurrency = p.displayCurrency, categoryId = f.categoryId ?: cats.firstOrNull()?.id)
+    val state = combine(form, finance.observeCategories(), finance.observeAccounts(), prefs.prefs) { f, cats, acc, p ->
+        val relevant = cats.filter { c ->
+            if (f.debit) c.kind.name in setOf("EXPENSE", "ANY") else c.kind.name in setOf("INCOME", "ANY")
+        }
+        val keepCat = f.categoryId?.takeIf { id -> relevant.any { it.id == id } }
+            ?: f.categoryId?.takeIf { id -> cats.any { it.id == id } } // گرچه نامرتبط، اما اگر از پیش تعیین شده نگه بداریم
+        f.copy(
+            categories = cats,
+            accounts = acc,
+            displayCurrency = p.displayCurrency,
+            accountId = f.accountId ?: p.defaultAccountId ?: acc.firstOrNull()?.id,
+            categoryId = keepCat ?: relevant.firstOrNull()?.id,
+        )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), RuleBuilderState())
 
     init {
@@ -95,6 +143,7 @@ class RuleBuilderViewModel @Inject constructor(
             when {
                 ruleId > 0 -> {
                     val r = automation.loadRules().firstOrNull { it.id == ruleId } ?: return@launch
+                    val cur = prefs.prefs.first().displayCurrency
                     form.update {
                         it.copy(
                             ruleId = r.id,
@@ -102,13 +151,11 @@ class RuleBuilderViewModel @Inject constructor(
                             title = r.action?.title.orEmpty(),
                             autoApprove = r.autoApprove,
                             categoryId = r.action?.categoryId,
+                            accountId = r.action?.accountId,
                             amount = r.conditions.firstOrNull { c -> c.field == ConditionField.AMOUNT }?.value
                                 ?.toLongOrNull()
                                 ?.let { rials ->
-                                    MoneyFormatter.toDisplayNumber(
-                                        rials,
-                                        ir.hesabino.app.domain.model.DisplayCurrency.TOMAN,
-                                    ).toString()
+                                    MoneyFormatter.toDisplayNumber(rials, cur).toString()
                                 }
                                 .orEmpty(),
                             sender = r.conditions.firstOrNull { c -> c.field == ConditionField.SENDER }?.value.orEmpty(),
@@ -160,21 +207,150 @@ class RuleBuilderViewModel @Inject constructor(
     fun setSender(v: String) = form.update { it.copy(sender = v) }
     fun setBody(v: String) = form.update { it.copy(bodyContains = v) }
     fun setLast4(v: String) = form.update { it.copy(last4 = v.filter { ch -> ch.isDigit() }.take(4)) }
-    fun setDebit(v: Boolean) = form.update { it.copy(debit = v) }
+    fun setDebit(v: Boolean) {
+        form.update { it.copy(debit = v, categoryId = null) }
+    }
+
     fun setAuto(v: Boolean) = form.update { it.copy(autoApprove = v) }
     fun setCategory(id: Long) = form.update { it.copy(categoryId = id) }
+    fun setAccount(id: Long) = form.update { it.copy(accountId = id) }
+    fun setTestBody(v: String) = form.update { it.copy(testBody = v, sim = null) }
+
+    /**
+     * شبیه‌سازی پردازش یک پیامک بانکی نمونه با متن واردشدهٔ کاربر:
+     * پارسر را اجرا می‌کند تا مشخص شود مبلغ/نوع/بانک/کارت استخراج می‌شود
+     * و بعد قانون روی همان رویداد بررسی می‌شود. برای وقتی که هنوز پیامکی
+     * اسکن نشده مفید است و مستقیماً علت «پیدا نکردن تراکنش» را نشان می‌دهد.
+     */
+    fun simulate() {
+        viewModelScope.launch {
+            val f = state.value
+            val body = f.testBody.trim()
+            if (body.isBlank()) return@launch
+            val rule = f.toRule()
+            val cur = f.displayCurrency
+            val fmt = { rials: Long? -> MoneyFormatter.format(rials ?: 0L, cur, persianDigits = false, withUnit = true) }
+            val diag = mutableListOf<String>()
+
+            val parsed = parser.parse(f.sender.trim(), body, System.currentTimeMillis())
+            val event = parsed?.let { p ->
+                BankEvent(
+                    id = 0,
+                    senderId = f.sender.trim(),
+                    bankKey = p.bankKey,
+                    parsedType = p.type,
+                    amountRials = p.amountRials,
+                    currencyHint = p.unit,
+                    cardLast4 = p.cardLast4,
+                    balanceRials = p.balanceRials,
+                    description = p.description,
+                    receivedAt = System.currentTimeMillis(),
+                    fingerprint = "",
+                    bodyHash = "",
+                    rawBody = body,
+                    parseStatus = p.status,
+                )
+            }
+            val matched = event != null && RuleEngine.matches(event!!, rule)
+            if (event == null) {
+                diag.add("این متن به‌عنوان پیامک بانکی شناسایی نشد (فرستنده یا عبارت بانکی + مبلغ لازم است).")
+            } else {
+                if (event.amountRials == null) diag.add("مبلغی در پیامک استخراج نشد.")
+                if (event.parsedType.name == "UNKNOWN") diag.add("نوع تراکنش (برداشت/واریز) تشخیص داده نشد.")
+                if (event.bankKey == "generic") diag.add("بانک به‌صورت عمومی (نه اختصاصی) شناسایی شد.")
+                if (!matched) {
+                    diag.add("پیامک پردازش شد اما با شرایط این قانون هم‌خوانی نداشت.")
+                }
+            }
+
+            val typeLabel = when (parsed?.type) {
+                BankEventType.DEBIT -> "برداشت"
+                BankEventType.CREDIT -> "واریز"
+                else -> "نامشخص"
+            }
+            form.update {
+                it.copy(
+                    sim = SimResult(
+                        sender = f.sender.trim(),
+                        body = body,
+                        parsed = parsed != null && parsed.status != ParseStatus.UNPARSED,
+                        bankLabel = parsed?.bankKey?.let { bankDisplayName(it) } ?: "—",
+                        typeLabel = typeLabel,
+                        amountText = if (event?.amountRials != null) fmt(event.amountRials) else "استخراج نشد",
+                        cardLast4 = event?.cardLast4,
+                        statusLabel = parsed?.status?.name ?: "UNPARSED",
+                        matched = matched,
+                        diagnostics = diag,
+                    ),
+                )
+            }
+        }
+    }
+
+    private fun bankDisplayName(key: String): String = when (key) {
+        "mellat" -> "بانک ملت"
+        "melli" -> "بانک ملی"
+        "saderat" -> "بانک صادرات"
+        "pasargad" -> "بانک پاسارگاد"
+        "tejarat" -> "بانک تجارت"
+        "saman" -> "بانک سامان"
+        "parsian" -> "بانک پارسیان"
+        "ayandeh" -> "بانک آینده"
+        "resalat" -> "قرض‌الحسنه رسالت"
+        "keshavarzi" -> "بانک کشاورزی"
+        "generic" -> "بانک (عمومی)"
+        else -> key
+    }
 
     fun dryRun() {
         viewModelScope.launch {
-            val events = automation.recentEvents(12)
-            val rule = state.value.toRule()
-            val rows = RuleEngine.dryRun(rule, events).map { (e, ok) ->
-                val date = JalaliDate.from(e.receivedAt).format(false)
-                "$date · ${e.senderId} · ${e.amountRials ?: "-"}" to ok
+            val f = state.value
+            val rule = f.toRule()
+            val cur = f.displayCurrency
+            val fmt = { rials: Long? ->
+                MoneyFormatter.format(rials ?: 0L, cur, persianDigits = false, withUnit = true)
             }
-            form.update { it.copy(dryRun = rows) }
+
+            // ۱) پیامک‌های بانکی واقعی (فقط همین‌ها برای شرط فرستنده/متن/کارت قابل‌ارزیابی‌اند)
+            val events = automation.recentEvents(25)
+            val matchedE = events.filter { RuleEngine.matches(it, rule) }.map { e ->
+                "${JalaliDate.from(e.receivedAt).format(false)} · ${e.senderId} · ${fmt(e.amountRials)}"
+            }
+
+            // ۲) تراکنش‌های ثبت‌شدهٔ کاربر (برای اعتبارسنجی شرط مبلغ/نوع روی دادهٔ خودِ کاربر)
+            val tx = finance.allTransactions().take(40)
+            val matchedT = tx.filter { tx ->
+                val event = probeFromTx(tx)
+                RuleEngine.matches(event, rule)
+            }.map { tx ->
+                "${JalaliDate.from(tx.occurredAt).format(false)} · ${tx.title} · ${fmt(tx.amountRials)}"
+            }
+
+            form.update {
+                it.copy(
+                    dryRun = DryRunResult(
+                        eventMatched = matchedE,
+                        eventTotal = events.size,
+                        txMatched = matchedT,
+                        txTotal = tx.size,
+                    ),
+                )
+            }
         }
     }
+
+    private fun probeFromTx(tx: ir.hesabino.app.domain.model.Transaction) =
+        ir.hesabino.app.engine.rules.sampleBankEvent(
+            senderId = "",
+            type = when (tx.type) {
+                ir.hesabino.app.domain.model.TxType.EXPENSE -> BankEventType.DEBIT
+                ir.hesabino.app.domain.model.TxType.INCOME -> BankEventType.CREDIT
+                else -> BankEventType.DEBIT
+            },
+            amountRials = tx.amountRials,
+            body = tx.title,
+            receivedAt = tx.occurredAt,
+        )
 
     fun save() {
         viewModelScope.launch {

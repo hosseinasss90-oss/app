@@ -1,0 +1,95 @@
+name: Build Hesabino APK
+
+# ساخت APK حسابینو با GitHub Actions و انتشار آن به صورت یک Release قابل دانلود.
+
+on:
+  push:
+    branches:
+      - arena/01a08808-app
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: hesabino
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Diagnose environment
+        run: |
+          echo "::notice::JAVA_HOME=$JAVA_HOME"
+          java -version
+          echo "ANDROID_HOME=${ANDROID_HOME:-<unset>}"
+          echo "::notice::ANDROID_HOME=${ANDROID_HOME:-<unset>}"
+          if [ -n "$ANDROID_HOME" ]; then
+            echo "::notice::platforms=$(ls "$ANDROID_HOME/platforms" 2>/dev/null | tr '\n' ' ')"
+            echo "::notice::build-tools=$(ls "$ANDROID_HOME/build-tools" 2>/dev/null | tr '\n' ' ')"
+            echo "::notice::cmdline-tools=$(ls "$ANDROID_HOME/cmdline-tools" 2>/dev/null | tr '\n' ' ')"
+            echo "::notice::licenses=$(ls "$ANDROID_HOME/licenses" 2>/dev/null | tr '\n' ' ')"
+          fi
+
+      - name: Set up Gradle 8.9 (no wrapper jar needed)
+        run: |
+          curl -fsSLO https://services.gradle.org/distributions/gradle-8.9-bin.zip
+          unzip -q -o gradle-8.9-bin.zip -d "$RUNNER_TEMP/gradle"
+          "$RUNNER_TEMP/gradle/gradle-8.9/bin/gradle" --version
+
+      - name: Build debug APK (captured)
+        run: |
+          set +e
+          "$RUNNER_TEMP/gradle/gradle-8.9/bin/gradle" :app:assembleDebug --no-daemon --stacktrace > gradle_build.log 2>&1
+          status=$?
+          echo "::notice::gradle exit code = $status"
+          if [ $status -ne 0 ]; then
+            echo "::error::GRADLE BUILD FAILED (exit $status)"
+            echo "==== kotlin/compile errors ====" | sed 's/^/::error::/'
+            grep -nE '^e: |error:|unresolved reference|Type mismatch|Overload resolution ambiguity|Unresolved|No value passed|expecting|Execution failed for task' gradle_build.log | head -n 90 | sed 's/^/::error::/'
+            echo "==== tail ====" | sed 's/^/::error::/'
+            tail -n 30 gradle_build.log | sed 's/^/::error::/'
+          else
+            echo "::notice::BUILD SUCCEEDED"
+          fi
+          exit $status
+
+      - name: Upload debug APK as artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hesabino-debug-apk
+          path: hesabino/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - name: Publish APK as a GitHub Release
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          TAG="hesabino-debug-apk"
+          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$TAG" app/build/outputs/apk/debug/app-debug.apk \
+            --title "Hesabino test build (debug APK)" \
+            --notes "APK test build of Hesabino (debug) for Android. Built by GitHub Actions from branch ${GITHUB_REF_NAME} commit ${GITHUB_SHA}" \
+            || true
+          echo "::notice::release_url=$(gh release view "$TAG" --json url -q .url 2>/dev/null)"
+
+      - name: Report result
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "::notice::APK built and published successfully."
+          else
+            echo "::notice::APK build did not complete successfully."
+          fi

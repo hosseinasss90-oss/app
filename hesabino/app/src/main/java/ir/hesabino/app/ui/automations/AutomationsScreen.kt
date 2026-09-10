@@ -26,6 +26,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -47,6 +48,7 @@ fun AutomationsScreen(
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     var tab by rememberSaveable { mutableIntStateOf(0) }
+    LaunchedEffect(Unit) { vm.loadDiagnostics() }
     Scaffold(
         floatingActionButton = {
             FloatingActionButton(onClick = onNewRule, containerColor = MaterialTheme.colorScheme.primary) {
@@ -59,6 +61,11 @@ fun AutomationsScreen(
                 .fillMaxSize()
                 .padding(padding),
         ) {
+            SmsStatusCard(
+                diag = state.diag,
+                draftsCount = state.drafts.size,
+                onRefresh = vm::loadDiagnostics,
+            )
             TabRow(selectedTabIndex = tab) {
                 Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("پیش‌نویس‌ها (${state.drafts.size})") })
                 Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("قوانین (${state.rules.size})") })
@@ -119,6 +126,61 @@ fun AutomationsScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun SmsStatusCard(
+    diag: SmsDiagnostics,
+    draftsCount: Int,
+    onRefresh: () -> Unit,
+) {
+    androidx.compose.material3.Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("وضعیت پیامک بانکی", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                OutlinedButton(onClick = onRefresh) { Text("به‌روزرسانی") }
+            }
+            if (!diag.loaded) {
+                Text("در حال بررسی…", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                Text(
+                    "پیامک ذخیره‌شده: ${diag.storedEvents.toString()}  ·  شناسایی‌شده: ${diag.parsedCount.toString()}  ·  ناشناخته: ${diag.unparsedCount.toString()}",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                if (diag.senders.isNotEmpty()) {
+                    Text(
+                        "فرستنده‌های دیده‌شده: ${diag.senders.joinToString("، ")}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (diag.storedEvents == 0) {
+                    Text(
+                        "هنوز هیچ پیامکی در اپ ذخیره نشده است. مطمئن شوید در «تنظیمات» دکمهٔ «فعال‌سازی و اسکن پیامک‌های قبلی» را زده باشید و مجوز دسترسی به پیامک‌ها را داده باشید.",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                } else if (diag.parsedCount == 0) {
+                    Text(
+                        "${diag.storedEvents.toString()} پیامک ذخیره شده اما هیچ‌کدام «پارسی» نشده‌اند (مبلغ/نوع استخراج نشده). این یعنی قالب پیامک بانک شما شناخته نشده است.",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+            Text(
+                "نکته: فقط پیامک‌هایی که «شناسایی» شوند به پیش‌نویس/تراکنش تبدیل می‌شوند. پیش‌نویس‌های آماده: ${draftsCount.toString()}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

@@ -28,6 +28,16 @@ class AutomationRepository @Inject constructor(
     suspend fun eventByFingerprint(fp: String) = events.byFingerprint(fp)?.toDomain()
     suspend fun eventById(id: Long) = events.get(id)?.toDomain()
     suspend fun recentEvents(limit: Int = 20) = events.recent(limit).map { it.toDomain() }
+    fun observeStoredEventCount(): Flow<Int> = events.observeCount()
+    suspend fun storedCountNow(): Int = events.count()
+
+    /** برای عیب‌یابی: شمار پیامک‌های ذخیره‌شده به تفکیک وضعیت پارس. */
+    suspend fun parseStatusCounts(): Map<String, Int> {
+        val statuses = listOf("PARSED", "PARTIAL", "UNPARSED")
+        return statuses.associateWith { events.countByParseStatus(it) }
+    }
+
+    suspend fun storedSenders(): List<String> = events.distinctSenders()
     suspend fun recentBySender(sender: String, limit: Int = 20) =
         events.recentBySender(sender, limit).map { it.toDomain() }
 

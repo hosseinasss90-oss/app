@@ -26,6 +26,8 @@ class SettingsViewModel @Inject constructor(
     fun setStoreRaw(v: Boolean) { viewModelScope.launch { prefs.setStoreRawSms(v) } }
     fun setLock(v: Boolean) { viewModelScope.launch { prefs.setLock(v) } }
     fun setBiometric(v: Boolean) { viewModelScope.launch { prefs.setBiometric(v) } }
+    fun addWatchedSender(sender: String) { viewModelScope.launch { prefs.addWatchedSender(sender) } }
+    fun removeWatchedSender(sender: String) { viewModelScope.launch { prefs.removeWatchedSender(sender) } }
 
     suspend fun exportHint(): String {
         val json = backup.exportJson()
